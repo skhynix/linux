@@ -1150,6 +1150,15 @@ config LRU_GEN_STATS
 	  This option has a per-memcg and per-node memory overhead.
 # }
 
+config INTERLEAVE_WEIGHT
+	bool "Enable interleave weight policy"
+	depends on NUMA && X86 && 64BIT
+	default n
+	help
+	  Interleave weight is a memory allocation policy that increases fast
+	  memory utilization by determining the page allocation ratio based on
+	  bandwidth differences between NUMA memories.
+
 source "mm/damon/Kconfig"
 
 endmenu

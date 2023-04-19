@@ -1056,6 +1056,11 @@ asmlinkage long sys_memfd_secret(unsigned int flags);
 asmlinkage long sys_set_mempolicy_home_node(unsigned long start, unsigned long len,
 					    unsigned long home_node,
 					    unsigned long flags);
+asmlinkage long sys_set_mempolicy_node_weight(const unsigned int __user *weight,
+					    unsigned int weight_count, unsigned long flags)
+asmlinkage long sys_mrange_node_weight(unsigned long start, unsigned long len,
+			      const unsigned int __user *weights,
+			      unsigned int weight_count, unsigned long flags)
 
 /*
  * Architecture-specific system calls

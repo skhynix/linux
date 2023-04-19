@@ -1687,6 +1687,237 @@ SYSCALL_DEFINE4(set_mempolicy_home_node, unsigned long, start, unsigned long, le
 	return err;
 }
 
+#ifdef CONFIG_INTERLEAVE_WEIGHT
+/*
+ * set weight field of current task's mempolicy w/ weights
+ * of which element count equals to weight_count
+ *
+ * Return 0 on success, error on fail
+ */
+static long do_set_mempolicy_node_weight(unsigned int *weights,
+					 unsigned int weight_count,
+					 unsigned long flags)
+{
+	struct mempolicy *new, *old;
+	struct interleave_weight *new_iw;
+	int i = 0;
+	int ret = 0;
+
+	/*
+	 * flags is used for future extension if any.
+	 */
+	if (flags != 0)
+		return -EINVAL;
+
+	if (!current->mempolicy)
+		return -EOPNOTSUPP;
+
+	if (current->mempolicy->flags & MPOL_F_AUTO_WEIGHT)
+		return -EOPNOTSUPP;
+
+	new = mpol_dup(current->mempolicy);
+	if (IS_ERR(new)) {
+		ret = PTR_ERR(new);
+		return ret;
+	}
+	if (new->mode != MPOL_INTERLEAVE_WEIGHT)
+		return -EOPNOTSUPP;
+
+	INIT_LIST_HEAD(&new->weight_list);
+	for (i = 0; i < weight_count; i++) {
+		if (weights[i] == 0)
+			continue;
+		new_iw = kmalloc(sizeof(struct interleave_weight), GFP_ATOMIC);
+		if (!new_iw) {
+			ret = -ENOMEM;
+			break;
+		}
+		new_iw->nid = i;
+		new_iw->weight = weights[i];
+		list_add_tail(&new_iw->list, &new->weight_list);
+	}
+
+	task_lock(current);
+	old = current->mempolicy;
+	current->mempolicy = new;
+	task_unlock(current);
+
+	mpol_put(old);
+	return ret;
+}
+
+static long kernel_set_mempolicy_node_weight(const unsigned int __user *weights,
+					   unsigned int weight_count,
+					   unsigned long flags)
+{
+	unsigned int *new_weights;
+	int ret;
+
+	new_weights = kmalloc_array(weight_count, sizeof(unsigned int),
+				    GFP_ATOMIC);
+	if (!new_weights) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	ret = copy_from_user(new_weights, weights,
+			     weight_count * sizeof(unsigned int));
+	if (ret) {
+		ret = -EFAULT;
+		goto out;
+	}
+
+	ret = do_set_mempolicy_node_weight(new_weights, weight_count, flags);
+out:
+	kfree(new_weights);
+
+	return ret;
+}
+
+SYSCALL_DEFINE3(set_mempolicy_node_weight, const unsigned int __user *, weights,
+		unsigned int, weight_count, unsigned long, flags)
+{
+	return kernel_set_mempolicy_node_weight(weights, weight_count, flags);
+}
+
+/*
+ * do_mrange_node_weight - set weight in mempolicy
+ * set weight of each vma between start ~ start + len
+ *
+ * Return 0 on success, error on fail
+ */
+static long do_mrange_node_weight(unsigned long start, unsigned long len,
+			 const unsigned int *weights,
+			 unsigned int weight_count, unsigned long flags)
+{
+	struct mm_struct *mm = current->mm;
+	struct vm_area_struct *vma;
+	struct mempolicy *new, *pol;
+	unsigned long vmstart;
+	unsigned long vmend;
+	unsigned long end;
+	int err = -ENOENT;
+	int i;
+	struct interleave_weight *new_iw;
+	VMA_ITERATOR(vmi, mm, start);
+
+	start = untagged_addr(start);
+	if (start & ~PAGE_MASK)
+		return -EINVAL;
+	/*
+	 * flags is used for future extension if any.
+	 */
+	if (flags != 0)
+		return -EINVAL;
+
+	len = PAGE_ALIGN(len);
+	end = start + len;
+
+	if (end < start)
+		return -EINVAL;
+	if (end == start)
+		return 0;
+
+	/* check if we can success over [start, end) as a whole. */
+	for_each_vma_range(vmi, vma, end) {
+		vmstart = max(start, vma->vm_start);
+		vmend   = min(end, vma->vm_end);
+		pol = vma_policy(vma);
+		if (pol->mode == MPOL_INTERLEAVE_WEIGHT &&
+		    pol->flags & MPOL_F_AUTO_WEIGHT) {
+			return -EOPNOTSUPP;
+		}
+	}
+	vma_iter_init(&vmi, mm, start);
+	mmap_write_lock(mm);
+	for_each_vma_range(vmi, vma, end) {
+		vmstart = max(start, vma->vm_start);
+		vmend   = min(end, vma->vm_end);
+		new = mpol_dup(vma_policy(vma));
+		if (IS_ERR(new)) {
+			err = PTR_ERR(new);
+			break;
+		}
+		/*
+		 * Only for MPOL_INTERLEAVE_WEIGHT
+		 */
+		if (new->mode != MPOL_INTERLEAVE_WEIGHT) {
+			err = -EOPNOTSUPP;
+			break;
+		}
+		INIT_LIST_HEAD(&new->weight_list);
+		for (i = 0; i < weight_count; i++) {
+			if (weights[i] == 0)
+				continue;
+			new_iw = kmalloc(sizeof(struct interleave_weight),
+					 GFP_ATOMIC);
+			if (!new_iw) {
+				err = -ENOMEM;
+				break;
+			}
+			new_iw->nid = i;
+			new_iw->weight = weights[i];
+			list_add_tail(&new_iw->list, &new->weight_list);
+		}
+
+		err = mbind_range(mm, vmstart, vmend, new);
+		mpol_put(new);
+		if (err)
+			break;
+	}
+	mmap_write_unlock(mm);
+	return err;
+}
+
+static long kernel_mrange_node_weight(unsigned long start, unsigned long len,
+			     const unsigned int __user *weights,
+			     unsigned int weight_count, unsigned long flags)
+{
+	unsigned int *new_weights;
+	int ret;
+
+	new_weights = kmalloc_array(weight_count, sizeof(unsigned int), GFP_ATOMIC);
+	if (!new_weights) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	ret = copy_from_user(new_weights, weights,
+			     weight_count * sizeof(unsigned int));
+	if (ret) {
+		ret = -EFAULT;
+		goto out;
+	}
+
+	ret = do_mrange_node_weight(start, len, new_weights, weight_count,
+				    flags);
+out:
+	kfree(new_weights);
+
+	return ret;
+}
+
+SYSCALL_DEFINE5(mrange_node_weight, unsigned long, start, unsigned long, len,
+		const unsigned int __user *, weights,
+		unsigned int, weight_count, unsigned long, flags)
+{
+	return kernel_mrange_node_weight(start, len, weights, weight_count, flags);
+}
+#else
+SYSCALL_DEFINE3(set_mempolicy_node_weight, const unsigned int __user *, weights,
+		unsigned int, weight_count, unsigned long, flags)
+{
+	return -ENOSYS;
+}
+
+SYSCALL_DEFINE5(mrange_node_weight, unsigned long, start, unsigned long, len,
+		const unsigned int __user *, weights,
+		unsigned int, weight_count, unsigned long, flags)
+{
+	return -ENOSYS;
+}
+#endif
+
 SYSCALL_DEFINE6(mbind, unsigned long, start, unsigned long, len,
 		unsigned long, mode, const unsigned long __user *, nmask,
 		unsigned long, maxnode, unsigned int, flags)

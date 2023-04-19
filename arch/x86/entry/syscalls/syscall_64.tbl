@@ -372,6 +372,8 @@
 448	common	process_mrelease	sys_process_mrelease
 449	common	futex_waitv		sys_futex_waitv
 450	common	set_mempolicy_home_node	sys_set_mempolicy_home_node
+451	common	set_mempolicy_node_weight	sys_set_mempolicy_node_weight
+452	common	mrange_node_weight		sys_mrange_node_weight
 
 #
 # Due to a historical design error, certain syscalls are numbered differently

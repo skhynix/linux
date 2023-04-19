@@ -823,8 +823,14 @@ __SYSCALL(__NR_cachestat, sys_cachestat)
 #define __NR_fchmodat2 452
 __SYSCALL(__NR_fchmodat2, sys_fchmodat2)
 
+#define __NR_set_mempolicy_node_weight 454
+__SYSCALL(__NR_set_mempolicy_node_weight, sys_set_mempolicy_node_weight)
+
+#define __NR_mrange_node_weight 455
+__SYSCALL(__NR_mrange_node_weight, sys_mrange_node_weight)
+
 #undef __NR_syscalls
-#define __NR_syscalls 453
+#define __NR_syscalls 456
 
 /*
  * 32 bit systems traditionally used different

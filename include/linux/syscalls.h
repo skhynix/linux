@@ -940,6 +940,11 @@ asmlinkage long sys_cachestat(unsigned int fd,
 		struct cachestat_range __user *cstat_range,
 		struct cachestat __user *cstat, unsigned int flags);
 asmlinkage long sys_map_shadow_stack(unsigned long addr, unsigned long size, unsigned int flags);
+asmlinkage long sys_set_mempolicy_node_weight(const unsigned int __user *weight,
+					    unsigned int weight_count, unsigned long flags)
+asmlinkage long sys_mrange_node_weight(unsigned long start, unsigned long len,
+			      const unsigned int __user *weights,
+			      unsigned int weight_count, unsigned long flags)
 
 /*
  * Architecture-specific system calls

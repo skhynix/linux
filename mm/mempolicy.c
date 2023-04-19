@@ -3792,3 +3792,253 @@ void mpol_to_str(char *buffer, int maxlen, struct mempolicy *pol)
 		p += scnprintf(p, buffer + maxlen - p, ":%*pbl",
 			       nodemask_pr_args(&nodes));
 }
+
+#if defined(CONFIG_INTERLEAVE_WEIGHT) && defined(CONFIG_SYSFS)
+
+struct iw_node_info {
+	struct kobject kobj;
+	int nid;
+};
+
+static ssize_t interleave_weight_show(struct kobject *kobj,
+				      struct kobj_attribute *attr, char *buf)
+{
+	int len = 0, nid = 0;
+	struct iw_node_info *node_info = NULL;
+	struct interleave_weight_table *table_nid = NULL;
+	struct interleave_weight *iw_nid = NULL;
+
+	node_info = container_of(kobj, struct iw_node_info, kobj);
+	nid = node_info->nid;
+
+	table_nid = &iw_table[nid];
+	list_for_each_entry(iw_nid, &table_nid->weight_list, list) {
+		len += sysfs_emit_at(buf, len, "%d*%u",
+				     iw_nid->nid, iw_nid->weight);
+
+		if (!list_is_last(&iw_nid->list, &table_nid->weight_list))
+			len += sysfs_emit_at(buf, len, ",");
+	}
+	len += sysfs_emit_at(buf, len, "\n");
+
+	return len;
+}
+
+static ssize_t interleave_weight_store(struct kobject *kobj,
+				       struct kobj_attribute *attr,
+				       const char *buf, size_t count)
+{
+	char *ptr_comma = NULL;
+	char *ptr_asterisk = NULL;
+	char *s_dup, *to_free;
+	long node = 0, weight = 0, nid = 0;
+	int ret;
+	struct interleave_weight *temp, *n_temp;
+	struct iw_node_info *node_info = NULL;
+	struct interleave_weight_table *table_nid = NULL;
+	struct interleave_weight *weight_nid = NULL;
+
+	node_info = container_of(kobj, struct iw_node_info, kobj);
+	nid = node_info->nid;
+
+	to_free = s_dup = kstrdup(buf, GFP_KERNEL);
+	if (!s_dup)
+		return -ENOMEM;
+
+	table_nid = &iw_table[nid];
+	nodes_clear(table_nid->nodes);
+	list_for_each_entry_safe(temp, n_temp, &table_nid->weight_list, list) {
+		list_del(&temp->list);
+		kfree(temp);
+	}
+	INIT_LIST_HEAD(&table_nid->weight_list);
+
+	while ((ptr_comma = strsep(&s_dup, ","))) {
+		ptr_asterisk = strsep(&ptr_comma, "*");
+		if (strlen(ptr_asterisk) <= 0 ||
+		    kstrtol(ptr_asterisk, 10, &node)) {
+			ret = -EINVAL;
+			goto out;
+		}
+
+		if (ptr_comma == NULL) {
+			weight = 1;
+		} else {
+			ptr_asterisk = ptr_comma;
+			if (strlen(ptr_asterisk) <= 0 ||
+			    kstrtol(ptr_asterisk, 10, &weight)) {
+				ret = -EINVAL;
+				goto out;
+			}
+		}
+
+		if (node >= MAX_NUMNODES || node < 0 || weight < 0) {
+			ret = -EINVAL;
+			goto out;
+		}
+
+		node_set((int)node, table_nid->nodes);
+		weight_nid = kmalloc(sizeof(struct interleave_weight),
+				     GFP_KERNEL);
+		weight_nid->nid = (unsigned int)node;
+		weight_nid->weight = (unsigned int)weight;
+		list_add_tail(&weight_nid->list, &table_nid->weight_list);
+	}
+	ret = count;
+
+out:
+	kfree(to_free);
+	return ret;
+}
+
+static struct kobj_attribute iw_node_attr = __ATTR_RW(interleave_weight);
+
+static struct attribute *iw_node_attrs[] = {
+	&iw_node_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group iw_node_attr_group = {
+	.attrs = iw_node_attrs,
+};
+
+static void iw_kobj_release(struct kobject *kobj)
+{
+	kfree(kobj);
+}
+
+static struct kobj_type iw_kobj_ktype = {
+	.release = iw_kobj_release,
+	.sysfs_ops = &kobj_sysfs_ops
+};
+
+static int add_iw_node(int nid, struct kobject *node_kobj)
+{
+	int ret;
+	struct iw_node_info *node_info = NULL;
+
+	node_info = kzalloc(sizeof(struct iw_node_info), GFP_KERNEL);
+	if (!node_info) {
+		ret = -ENOMEM;
+		pr_err("failed to allocate iw_node_info %d\n", nid);
+		goto fail;
+	}
+
+	kobject_init(&node_info->kobj, &iw_kobj_ktype);
+	ret = kobject_add(&node_info->kobj, node_kobj, "node%d", nid);
+	if (ret) {
+		pr_err("kobject_add error [node%d]: %d", nid, ret);
+		goto fail_kobj;
+	}
+	node_info->nid = nid;
+
+	ret = sysfs_create_group(&node_info->kobj, &iw_node_attr_group);
+	if (ret) {
+		pr_err("failed to register iw_node_attr_group\n");
+		goto fail_kobj;
+	}
+	return 0;
+
+fail_kobj:
+	kobject_put(&node_info->kobj);
+fail:
+	return ret;
+}
+
+static ssize_t enabled_show(struct kobject *kobj,
+			    struct kobj_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%d\n", iw_enabled);
+}
+
+static ssize_t enabled_store(struct kobject *kobj,
+			     struct kobj_attribute *attr,
+			     const char *buf, size_t count)
+{
+	ssize_t ret = count;
+
+	if (sysfs_streq(buf, "1"))
+		iw_enabled = true;
+	else if (sysfs_streq(buf, "0"))
+		iw_enabled = false;
+	else
+		ret = -EINVAL;
+
+	return ret;
+}
+
+static struct kobj_attribute enabled_attr = __ATTR_RW(enabled);
+
+static ssize_t possible_show(struct kobject *kobj,
+			     struct kobj_attribute *attr, char *buf)
+{
+	int nid, next_nid;
+	int len = 0;
+
+	for_each_node_state(nid, N_CPU) {
+		len += sysfs_emit_at(buf, len, "%d", nid);
+		next_nid = next_node(nid, node_states[N_CPU]);
+		if (next_nid < MAX_NUMNODES)
+			len += sysfs_emit_at(buf, len, ",");
+	}
+	len += sysfs_emit_at(buf, len, "\n");
+
+	return len;
+}
+
+static struct kobj_attribute possible_attr = __ATTR_RO(possible);
+
+static struct attribute *iw_attrs[] = {
+	&enabled_attr.attr,
+	&possible_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group iw_attr_group = {
+	.attrs = iw_attrs,
+};
+
+static int __init iw_sysfs_init(void)
+{
+	int err;
+	int nid;
+	struct kobject *root_kobj;
+	struct kobject *node_kobj;
+
+	root_kobj = kobject_create_and_add("interleave_weight", mm_kobj);
+	if (!root_kobj) {
+		pr_err("failed to create interleave_weight kobject\n");
+		return -ENOMEM;
+	}
+
+	err = sysfs_create_group(root_kobj, &iw_attr_group);
+	if (err) {
+		pr_err("failed to register interleave weight group\n");
+		goto fail_obj;
+	}
+
+	node_kobj = kobject_create_and_add("node", root_kobj);
+	if (!node_kobj) {
+		pr_err("failed to create node kobject\n");
+		err = -ENOMEM;
+		goto fail_obj;
+	}
+
+	for_each_node_state(nid, N_CPU) {
+		err = add_iw_node(nid, node_kobj);
+		if (err) {
+			pr_err("failed to add sysfs [node%d]\n", nid);
+			goto fail_node_obj;
+		}
+	}
+	return 0;
+fail_node_obj:
+	kobject_put(node_kobj);
+fail_obj:
+	kobject_put(root_kobj);
+	return err;
+
+}
+late_initcall(iw_sysfs_init);
+
+#endif

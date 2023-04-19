@@ -1258,6 +1258,15 @@ config LOCK_MM_AND_FIND_VMA
 	bool
 	depends on !STACK_GROWSUP
 
+config INTERLEAVE_WEIGHT
+	bool "Enable interleave weight policy"
+	depends on NUMA && X86 && 64BIT
+	default n
+	help
+	  Interleave weight is a memory allocation policy that increases fast
+	  memory utilization by determining the page allocation ratio based on
+	  bandwidth differences between NUMA memories.
+
 source "mm/damon/Kconfig"
 
 endmenu

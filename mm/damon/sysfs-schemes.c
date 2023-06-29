@@ -1139,6 +1139,7 @@ static const char * const damon_sysfs_damos_action_strs[] = {
 	"lru_deprio",
 	"stat",
 	"demote",
+	"promote",
 };
 
 static struct damon_sysfs_scheme *damon_sysfs_scheme_alloc(

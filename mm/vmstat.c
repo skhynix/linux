@@ -1278,6 +1278,7 @@ const char * const vmstat_text[] = {
 	"pgdemote_kswapd",
 	"pgdemote_direct",
 	"pgdemote_khugepaged",
+	"pgpromote",
 	"pgscan_kswapd",
 	"pgscan_direct",
 	"pgscan_khugepaged",

@@ -413,7 +413,8 @@ keep:
 }
 
 static unsigned long damon_pa_migrate_pages(struct list_head *folio_list,
-					    int target_nid)
+					    int target_nid,
+					    enum node_stat_item node_stat)
 {
 	int nid;
 	unsigned long nr_migrated = 0;
@@ -437,12 +438,15 @@ static unsigned long damon_pa_migrate_pages(struct list_head *folio_list,
 		nr_migrated += damon_pa_migrate_folio_list(&node_folio_list,
 							   NODE_DATA(nid),
 							   target_nid);
+		mod_node_page_state(NODE_DATA(nid), node_stat, nr_migrated);
+
 		nid = folio_nid(lru_to_folio(folio_list));
 	} while (!list_empty(folio_list));
 
 	nr_migrated += damon_pa_migrate_folio_list(&node_folio_list,
 						   NODE_DATA(nid),
 						   target_nid);
+	mod_node_page_state(NODE_DATA(nid), node_stat, nr_migrated);
 
 	memalloc_noreclaim_restore(noreclaim_flag);
 
@@ -452,6 +456,7 @@ static unsigned long damon_pa_migrate_pages(struct list_head *folio_list,
 static unsigned long damon_pa_migrate(struct damon_region *r, struct damos *s)
 {
 	unsigned long addr, applied;
+	enum node_stat_item node_stat = DAMON_MIGRATE_COLD;
 	LIST_HEAD(folio_list);
 
 	for (addr = r->ar.start; addr < r->ar.end; addr += PAGE_SIZE) {
@@ -469,8 +474,13 @@ static unsigned long damon_pa_migrate(struct damon_region *r, struct damos *s)
 put_folio:
 		folio_put(folio);
 	}
-	applied = damon_pa_migrate_pages(&folio_list, s->target_nid);
+
+	if (s->action == DAMOS_MIGRATE_HOT)
+		node_stat = DAMON_MIGRATE_HOT;
+
+	applied = damon_pa_migrate_pages(&folio_list, s->target_nid, node_stat);
 	cond_resched();
+
 	return applied * PAGE_SIZE;
 }
 

@@ -1255,6 +1255,10 @@ const char * const vmstat_text[] = {
 	"pgdemote_kswapd",
 	"pgdemote_direct",
 	"pgdemote_khugepaged",
+#ifdef CONFIG_DAMON_PADDR
+	"damon_migrate_hot",
+	"damon_migrate_cold",
+#endif
 
 	/* enum writeback_stat_item counters */
 	"nr_dirty_threshold",
